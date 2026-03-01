@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="fi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RETRO SPACE SHOOTER</title>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+    <style>
+        body {
+            background-color: #000;
+            margin: 0;
+            padding: 0;
+            font-family: 'Press Start 2P', cursive;
+            color: #fff;
+        }
+        canvas {
+            background: black;
+            display: block;
+            margin: auto;
+            border: 4px solid #00ff00;
+            box-shadow: 0 0 20px #00ff00;
+        }
+        h1 {
+            color: #ff00ff;
+            text-align: center;
+            font-size: 36px;
+            margin: 20px 0;
+            text-shadow: 0 0 10px #ff00ff, 0 0 20px #ff00ff;
+        }
+        #startScreen {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #00ff00;
+            font-size: 28px;
+            text-align: center;
+            text-shadow: 0 0 10px #00ff00;
+        }
+        #gameOverScreen {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #ff0000;
+            font-size: 28px;
+            text-align: center;
+            text-shadow: 0 0 10px #ff0000;
+            display: none;
+        }
+        button {
+            font-family: 'Press Start 2P', cursive;
+            font-size: 20px;
+            padding: 15px 30px;
+            cursor: pointer;
+            margin-top: 20px;
+            background-color: #ff00ff;
+            color: #000;
+            border: 2px solid #00ff00;
+            border-radius: 5px;
+            box-shadow: 0 0 10px #ff00ff, 0 0 20px #00ff00;
+            transition: all 0.2s ease;
+        }
+        button:hover {
+            background-color: #00ff00;
+            color: #ff00ff;
+            box-shadow: 0 0 20px #00ff00, 0 0 30px #ff00ff;
+        }
+        #highScores {
+            font-size: 16px;
+            margin-top: 20px;
+            color: #00ffff;
+            text-shadow: 0 0 10px #00ffff;
+        }
+        #highScoresList {
+            list-style-type: decimal;
+            padding-left: 20px;
+        }
+        #finalScore {
+            color: #ffff00;
+            text-shadow: 0 0 10px #ffff00;
+        }
+    </style>
+</head>
+<body>
+    <h1>RETRO SPACE SHOOTER</h1>
+    <canvas id="gameCanvas"></canvas>
+    <div id="startScreen">
+        <p>INSERT COIN TO START!</p>
+        <button id="startButton">START GAME</button>
+    </div>
+    <div id="gameOverScreen">
+        <p id="gameResult"></p>
+        <p id="finalScore"></p>
+        <div id="highScores">
+            <p>HIGH SCORES:</p>
+            <ol id="highScoresList"></ol>
+        </div>
+        <button id="restartButton">TRY AGAIN!</button>
+    </div>
+    <script>
+        const canvas = document.getElementById("gameCanvas");
+        const ctx = canvas.getContext("2d");
+        canvas.width = 800;
+        canvas.height = 600;
+
+        let score = 0;
+        let gameOver = false;
+        let gameStarted = false;
+        let lastTime = 0;
+        let gameResult = "";
+        let currentWave = 0;
+        const maxWaves = 4;
+        let enemyDirection = 1;
+        let glowPulse = 0;
+
+        // Äänet
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        function playSound(frequency, duration) {
+            const oscillator = audioContext.createOscillator();
+            oscillator.type = "square";
+            oscillator.frequency.setValueAtTime(frequency, audioContext.currentTime);
+            oscillator.connect(audioContext.destination);
+            oscillator.start();
+            oscillator.stop(audioContext.currentTime + duration);
+        }
+
+        // Pelaaja
+        const player = {
+            x: canvas.width / 2 - 20,
+            y: canvas.height - 60,
+            width: 40,
+            height: 40,
+            speed: 300,
+            dx: 0
+        };
+
+        // Ammukset
+        const bullets = [];
+        const enemyBullets = [];
+
+        // Viholliset
+        const enemies = [];
+        const rowsPerWave = 3;
+        const cols = 8;
+        const enemyWidth = 40;
+        const enemyHeight = 30;
+        const enemySpacing = 15;
+        let enemyBaseSpeed = 50;
+        const speedIncrease = 20;
+
+        // Parhaat pisteet
+        let highScores = JSON.parse(localStorage.getItem("highScores")) || [];
+
+        function updateHighScores() {
+            highScores.push(score);
+            highScores.sort((a, b) => b - a);
+            highScores = highScores.slice(0, 5);
+            localStorage.setItem("highScores", JSON.stringify(highScores));
+            displayHighScores();
+        }
+
+        function displayHighScores() {
+            const highScoresList = document.getElementById("highScoresList");
+            highScoresList.innerHTML = "";
+            highScores.forEach(score => {
+                const li = document.createElement("li");
+                li.innerText = score;
+                highScoresList.appendChild(li);
+            });
+        }
+
+        function addEnemyWave() {
+            enemies.length = 0;
+            for (let r = 0; r < rowsPerWave; r++) {
+                for (let c = 0; c < cols; c++) {
+                    enemies.push({
+                        x: c * (enemyWidth + enemySpacing) + 50,
+                        y: r * (enemyHeight + enemySpacing) + 30,
+                        width: enemyWidth,
+                        height: enemyHeight,
+                        row: r
+                    });
+                }
+            }
+            enemyBaseSpeed += speedIncrease;
+            currentWave++;
+        }
+
+        function resetGame() {
+            score = 0;
+            gameOver = false;
+            gameResult = "";
+            player.x = canvas.width / 2 - 20;
+            player.dx = 0;
+            bullets.length = 0;
+            enemyBullets.length = 0;
+            enemies.length = 0;
+            currentWave = 0;
+            enemyBaseSpeed = 50;
+            enemyDirection = 1;
+            addEnemyWave();
+        }
+
+        function drawPlayer() {
+            ctx.fillStyle = "white";
+            ctx.strokeStyle = "cyan";
+            ctx.lineWidth = 2;
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = "cyan";
+            ctx.beginPath();
+            ctx.moveTo(player.x + player.width / 2, player.y);
+            ctx.lineTo(player.x, player.y + player.height);
+            ctx.lineTo(player.x + player.width, player.y + player.height);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+            ctx.shadowColor = "transparent";
+        }
+
+        function drawBullets(deltaTime) {
+            ctx.fillStyle = "red";
+            bullets.forEach((bullet, index) => {
+                ctx.fillRect(bullet.x, bullet.y, bullet.width, bullet.height);
+                bullet.y -= bullet.speed * deltaTime;
+                if (bullet.y < 0) bullets.splice(index, 1);
+            });
+
+            ctx.fillStyle = "yellow";
+            enemyBullets.forEach((bullet, index) => {
+                ctx.fillRect(bullet.x, bullet.y, bullet.width, bullet.height);
+                bullet.y += bullet.speed * deltaTime;
+                if (bullet.y > canvas.height) enemyBullets.splice(index, 1);
+            });
+        }
+
+        function drawEnemies(deltaTime) {
+            ctx.fillStyle = "green";
+            const speedMultiplier = 1 + (24 - enemies.length) * 0.1;
+            enemies.forEach(enemy => {
+                // Vihollisen runko (ilman hehkua)
+                ctx.fillStyle = "green";
+                ctx.shadowBlur = 0; // Varmistetaan, että rungossa ei ole hehkua
+                ctx.shadowColor = "transparent";
+                ctx.beginPath();
+                ctx.moveTo(enemy.x, enemy.y);
+                ctx.lineTo(enemy.x + enemy.width, enemy.y);
+                ctx.lineTo(enemy.x + enemy.width * 0.8, enemy.y + enemy.height);
+                ctx.lineTo(enemy.x + enemy.width * 0.2, enemy.y + enemy.height);
+                ctx.closePath();
+                ctx.fill();
+
+                // Antennit (ilman hehkua)
+                ctx.fillRect(enemy.x + enemy.width * 0.2, enemy.y - 10, 5, 10);
+                ctx.fillRect(enemy.x + enemy.width * 0.6, enemy.y - 10, 5, 10);
+
+                // Hehkuvat punaiset silmät
+                ctx.fillStyle = "red";
+                ctx.shadowBlur = 10 + Math.sin(glowPulse) * 5;
+                ctx.shadowColor = "red";
+                ctx.beginPath();
+                ctx.arc(enemy.x + enemy.width / 4, enemy.y + enemy.height / 3, 3, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(enemy.x + 3 * enemy.width / 4, enemy.y + enemy.height / 3, 3, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+                ctx.shadowColor = "transparent";
+
+                enemy.x += enemyBaseSpeed * enemyDirection * speedMultiplier * deltaTime;
+            });
+
+            if (enemies.length > 0) {
+                const leftMost = Math.min(...enemies.map(e => e.x));
+                const rightMost = Math.max(...enemies.map(e => e.x + enemyWidth));
+                if (leftMost < 0 || rightMost > canvas.width) {
+                    enemyDirection *= -1;
+                    enemies.forEach(enemy => enemy.y += 20);
+                }
+            }
+
+            if (enemies.length > 0 && Math.random() < 0.03) {
+                const lowestRow = Math.max(...enemies.map(e => e.row));
+                const shooters = enemies.filter(e => e.row === lowestRow);
+                if (shooters.length > 0) {
+                    const shooter = shooters[Math.floor(Math.random() * shooters.length)];
+                    enemyBullets.push({
+                        x: shooter.x + shooter.width / 2 - 2,
+                        y: shooter.y + shooter.height,
+                        width: 4,
+                        height: 10,
+                        speed: 200
+                    });
+                    playSound(200, 0.1);
+                }
+            }
+        }
+
+        function drawScore() {
+            ctx.fillStyle = "#00ffff";
+            ctx.font = "20px 'Press Start 2P'";
+            ctx.fillText("SCORE: " + score, 10, 30);
+        }
+
+        function checkCollisions() {
+            const bulletsToRemove = new Set();
+            const enemiesToRemove = new Set();
+
+            for (let bulletIndex = 0; bulletIndex < bullets.length; bulletIndex++) {
+                const bullet = bullets[bulletIndex];
+                for (let enemyIndex = 0; enemyIndex < enemies.length; enemyIndex++) {
+                    const enemy = enemies[enemyIndex];
+                    if (
+                        bullet.x < enemy.x + enemy.width &&
+                        bullet.x + bullet.width > enemy.x &&
+                        bullet.y < enemy.y + enemy.height &&
+                        bullet.y + bullet.height > enemy.y
+                    ) {
+                        bulletsToRemove.add(bulletIndex);
+                        enemiesToRemove.add(enemyIndex);
+                        score += 10;
+                        playSound(500, 0.05);
+                    }
+                }
+            }
+
+            enemyBullets.forEach((bullet, bulletIndex) => {
+                if (
+                    bullet.x < player.x + player.width &&
+                    bullet.x + bullet.width > player.x &&
+                    bullet.y < player.y + player.height &&
+                    bullet.y + bullet.height > player.y
+                ) {
+                    gameOver = true;
+                    gameResult = "PLAYER DOWN!";
+                }
+            });
+
+            Array.from(bulletsToRemove).sort((a, b) => b - a).forEach(index => bullets.splice(index, 1));
+            Array.from(enemiesToRemove).sort((a, b) => b - a).forEach(index => enemies.splice(index, 1));
+        }
+
+        function checkGameOver() {
+            if (enemies.length === 0 && currentWave < maxWaves) {
+                addEnemyWave();
+            } else if (enemies.length === 0 && currentWave >= maxWaves) {
+                gameOver = true;
+                gameResult = "YOU WIN!";
+            } else if (enemies.some(enemy => enemy.y + enemy.height >= player.y)) {
+                gameOver = true;
+                gameResult = "PLAYER DOWN!";
+            }
+        }
+
+        function update(timestamp) {
+            if (!gameStarted) return;
+
+            const deltaTime = (timestamp - lastTime) / 1000;
+            lastTime = timestamp;
+
+            glowPulse += deltaTime * 2;
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            drawPlayer();
+            drawBullets(deltaTime);
+            drawEnemies(deltaTime);
+            drawScore();
+            checkCollisions();
+            checkGameOver();
+
+            if (gameOver) {
+                document.getElementById("gameOverScreen").style.display = "block";
+                document.getElementById("gameResult").innerText = gameResult;
+                document.getElementById("finalScore").innerText = "SCORE: " + score;
+                updateHighScores();
+                return;
+            }
+
+            player.x += player.dx * deltaTime;
+            if (player.x < 0) player.x = 0;
+            if (player.x + player.width > canvas.width) player.x = canvas.width - player.width;
+
+            requestAnimationFrame(update);
+        }
+
+        function movePlayer(e) {
+            if (e.key === "ArrowLeft") player.dx = -player.speed;
+            if (e.key === "ArrowRight") player.dx = player.speed;
+        }
+
+        function stopPlayer(e) {
+            if (e.key === "ArrowLeft" || e.key === "ArrowRight") player.dx = 0;
+        }
+
+        function shootBullet(e) {
+            if (e.key === " " && !e.repeat && !gameOver) {
+                bullets.push({
+                    x: player.x + player.width / 2 - 2,
+                    y: player.y,
+                    width: 4,
+                    height: 10,
+                    speed: 400
+                });
+                playSound(300, 0.1);
+            }
+        }
+
+        document.addEventListener("keydown", movePlayer);
+        document.addEventListener("keyup", stopPlayer);
+        document.addEventListener("keydown", shootBullet);
+
+        document.getElementById("startButton").addEventListener("click", () => {
+            gameStarted = true;
+            document.getElementById("startScreen").style.display = "none";
+            lastTime = performance.now();
+            requestAnimationFrame(update);
+        });
+
+        document.getElementById("restartButton").addEventListener("click", () => {
+            document.getElementById("gameOverScreen").style.display = "none";
+            resetGame();
+            gameStarted = true;
+            lastTime = performance.now();
+            requestAnimationFrame(update);
+        });
+
+        resetGame();
+        displayHighScores();
+    </script>
+</body>
+</html>
